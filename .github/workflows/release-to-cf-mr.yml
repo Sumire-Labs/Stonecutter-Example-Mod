@@ -1,0 +1,83 @@
+name: Publish to CurseForge and Modrinth
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish (e.g. v1.0.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: platform-release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.publish }}
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+      - name: Verify release tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          commit=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          test "$commit" = "$(git rev-parse HEAD)"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - id: select
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        run: python3 .github/scripts/matrix.py --publish
+  build:
+    needs: plan
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ needs.plan.outputs.commit }}
+  publish:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: publish-assets
+      - name: Changes since previous release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+          if [ -n "$previous" ]; then
+            git log --format='- %h %s' "$previous..HEAD" > CHANGELOG.md
+          else
+            git log --format='- %h %s' HEAD > CHANGELOG.md
+          fi
+      - uses: Kir-Antipov/mc-publish@v3
+        with:
+          modrinth-id: ${{ matrix.modrinth_id }}
+          modrinth-token: ${{ matrix.modrinth_id != '' && secrets.MODRINTH_TOKEN || '' }}
+          curseforge-id: ${{ matrix.curseforge_id }}
+          curseforge-token: ${{ matrix.curseforge_id != '' && secrets.CURSEFORGE_TOKEN || '' }}
+          files: publish-assets/*.jar
+          loaders: ${{ matrix.loaders }}
+          game-versions: ${{ matrix.minecraft }}
+          java: ${{ matrix.java }}
+          name: ${{ inputs.tag }} (${{ matrix.artifact }})
+          version: ${{ inputs.tag }}+${{ matrix.artifact }}
+          version-type: ${{ matrix.release_type }}
+          changelog-file: CHANGELOG.md

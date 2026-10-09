@@ -1,0 +1,23 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap' apply false
+    id 'net.fabricmc.fabric-loom' apply false
+}
+def mc = project.name.substring(0, project.name.lastIndexOf('-'))
+def needsRemapping = stonecutter.eval(mc, '<26.1')
+apply plugin: (needsRemapping ? 'net.fabricmc.fabric-loom-remap' : 'net.fabricmc.fabric-loom')
+apply from: rootProject.file('gradle/scripts/mod.gradle')
+dependencies {
+    minecraft "com.mojang:minecraft:$minecraftVersion"
+    if (needsRemapping) {
+        mappings loom.officialMojangMappings()
+        modImplementation "net.fabricmc:fabric-loader:${targetProperties.fabric_loader_version}"
+    } else {
+        implementation "net.fabricmc:fabric-loader:${targetProperties.fabric_loader_version}"
+    }
+}
+loom.runs {
+    client { programArg '--username'; programArg minecraft_username }
+    server { programArg '--nogui' }
+}
+ext.distributionJar = tasks.named(needsRemapping ? 'remapJar' : 'jar')
+distributionJar.configure { archiveClassifier = "$minecraftVersion-fabric" }

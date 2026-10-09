@@ -1,0 +1,67 @@
+// Shared settings applied by every backend after its Minecraft plugin.
+apply plugin: 'java-library'
+apply plugin: 'com.cleanroommc.tokenenvoy'
+
+def dash = project.name.lastIndexOf('-')
+ext.minecraftVersion = project.name.substring(0, dash)
+ext.modLoader = project.name.substring(dash + 1)
+def targetProperties = new Properties()
+rootProject.file("versions/$minecraftVersion/gradle.properties").withInputStream { targetProperties.load(it) }
+ext.targetProperties = targetProperties
+ext.targetJava = targetProperties.java_version.toInteger()
+base.archivesName = mod_archive_name
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(targetJava)
+    if (generate_sources_jar.toBoolean()) withSourcesJar()
+}
+// 0.10-alpha.12 can append both shared and generated sources after active selection.
+// Always compile the generated tree so every node follows the same preprocessing path.
+afterEvaluate {
+    sourceSets.main.java.setSrcDirs([
+        files(layout.buildDirectory.dir('generated/stonecutter/main/java')).builtBy(tasks.named('stonecutterGenerate'))
+    ])
+    sourceSets.main.resources.setSrcDirs([
+        files(layout.buildDirectory.dir('generated/stonecutter/main/resources')).builtBy(tasks.named('stonecutterGenerate'))
+    ])
+}
+// All metadata lives in src/main/resources; ship only the selected loader's descriptor.
+tasks.named('processResources') {
+    if (modLoader != 'fabric') exclude 'fabric.mod.json'
+    if (modLoader != 'forge') exclude 'META-INF/mods.toml'
+    if (modLoader != 'neoforge') exclude 'META-INF/neoforge.mods.toml'
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+tasks.named('jar', Jar) {
+    archiveClassifier = "$minecraftVersion-$modLoader-dev"
+    from(rootProject.file('LICENSE'))
+    manifest.attributes('Implementation-Title': mod_name, 'Implementation-Version': project.version.toString())
+}
+
+def json = { value ->
+    def encoded = groovy.json.JsonOutput.toJson(value.toString())
+    encoded.substring(1, encoded.length() - 1)
+}
+def authors = mod_authors.split(',').collect { it.trim() }.findAll { it }.collect { groovy.json.JsonOutput.toJson(it) }.join(', ')
+tokenEnvoy {
+    set 'MOD_ID', mod_id
+    set 'MOD_NAME', mod_name
+    set 'MOD_NAME_JSON', json(mod_name)
+    set 'MOD_VERSION', project.version.toString()
+    set 'MOD_DESCRIPTION', json(mod_description)
+    set 'MOD_AUTHORS', authors
+    set 'MOD_AUTHORS_JSON_STRINGS', authors ? authors.substring(1, authors.length() - 1) : ''
+    set 'MOD_AUTHORS_TEXT', json(mod_authors)
+    set 'MOD_LICENSE', json(mod_license)
+    set 'MOD_URL', json(mod_url)
+    set 'MOD_SOURCES_URL', json(mod_sources_url)
+    set 'MOD_ISSUE_TRACKER', json(mod_issue_tracker)
+    set 'MOD_PACKAGE', mod_package
+    set 'MINECRAFT_VERSION', minecraftVersion
+    set 'JAVA_VERSION', targetJava.toString()
+    set 'FABRIC_LOADER_VERSION', targetProperties.getProperty('fabric_loader_version', '')
+    set 'LOADER_MAJOR', targetProperties.getProperty("${modLoader}_version", '0').tokenize('.')[0]
+}

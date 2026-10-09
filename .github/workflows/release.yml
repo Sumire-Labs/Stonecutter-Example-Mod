@@ -1,0 +1,29 @@
+name: GitHub Release
+on:
+  push:
+    tags: ['*']
+permissions:
+  contents: read
+concurrency:
+  group: github-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: release-assets/*.jar
+          artifactErrorsFailBuild: true
+          generateReleaseNotes: true
+          immutableCreate: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
